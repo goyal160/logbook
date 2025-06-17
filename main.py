@@ -19,18 +19,18 @@ cursor.execute('''
         trip_date TEXT,
         start_km INTEGER,
         end_km INTEGER,
-        km_travelled INTEGER
+        km_travelled INTEGER,
+        remark TEXT
     )
 ''')
-try:
-    cursor.execute("ALTER TABLE trips ADD COLUMN remark TEXT")
-    conn.commit()
-except sqlite3.OperationalError:
-    pass  # Column already exists
 
 VEHICLE_LIST = ["CA Gaadi", "Manish", "Ertiga", "XL6"]
 
 st.title("🚗 Vehicle Trip Sheet Tracking")
+
+# Admin Access
+admin_password = st.sidebar.text_input("Enter Admin Password", type="password")
+is_admin = (admin_password == "admin123")  # Change password securely in deployment
 
 vehicle_no = st.selectbox("Select Vehicle", VEHICLE_LIST)
 trip_date = st.date_input("Trip Date", date.today())
@@ -86,6 +86,58 @@ elif existing_start and not existing_end:
         conn.commit()
         st.success("End KM recorded.")
         st.rerun()
+
+# Admin Editing Option
+if is_admin:
+    st.subheader("🛠 Admin: Edit/Delete Entry")
+    all_data = pd.read_sql("SELECT * FROM trips ORDER BY trip_date DESC", conn)
+    st.dataframe(all_data)
+
+    edit_id = st.number_input("Enter ID to Edit/Delete", min_value=1, step=1)
+    action = st.radio("Action", ["Update", "Delete"])
+
+    if action == "Update":
+        new_start = st.number_input("New Start KM", min_value=0, step=1)
+        new_end = st.number_input("New End KM", min_value=0, step=1)
+        new_remark = st.text_input("New Remark")
+        if st.button("Update Entry"):
+            new_km = new_end - new_start
+            cursor.execute("UPDATE trips SET start_km=?, end_km=?, km_travelled=?, remark=? WHERE id=?",
+                           (new_start, new_end, new_km, new_remark, edit_id))
+            conn.commit()
+            st.success("Entry updated.")
+            st.rerun()
+
+    if action == "Delete":
+        if st.button("Delete Entry"):
+            cursor.execute("DELETE FROM trips WHERE id=?", (edit_id,))
+            conn.commit()
+            st.success("Entry deleted.")
+            st.rerun()
+
+    if st.button("🗃 Backup Data to CSV"):
+        backup_df = pd.read_sql("SELECT * FROM trips", conn)
+        csv_bytes = backup_df.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download Backup CSV", csv_bytes, "trip_backup.csv", "text/csv")
+
+    # Admin Graph: Daily KM by Vehicle
+    st.subheader("📊 Daily KM by Vehicle")
+    graph_start = st.date_input("Graph Start Date", date.today().replace(day=1))
+    graph_end = st.date_input("Graph End Date", date.today())
+
+    km_data = pd.read_sql("""
+        SELECT trip_date, vehicle, SUM(km_travelled) as total_km
+        FROM trips
+        WHERE date(trip_date) BETWEEN ? AND ?
+        GROUP BY trip_date, vehicle
+        ORDER BY trip_date ASC
+    """, conn, params=(str(graph_start), str(graph_end)))
+
+    if not km_data.empty:
+        km_pivot = km_data.pivot(index='trip_date', columns='vehicle', values='total_km').fillna(0)
+        st.line_chart(km_pivot)
+    else:
+        st.info("No data available for selected date range.")
 
 # Download section
 st.subheader("Download Trip Data")
