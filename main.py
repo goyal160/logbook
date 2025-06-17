@@ -30,7 +30,7 @@ st.title("🚗 Vehicle Trip Sheet Tracking")
 
 # Admin Access
 admin_password = st.sidebar.text_input("Enter Admin Password", type="password")
-is_admin = (admin_password == "admin123")  # Change password securely in deployment
+is_admin = (admin_password == "RVPL@123")  # Change password securely in deployment
 
 vehicle_no = st.selectbox("Select Vehicle", VEHICLE_LIST)
 trip_date = st.date_input("Trip Date", date.today())
@@ -115,7 +115,7 @@ if is_admin:
             st.success("Entry deleted.")
             st.rerun()
 
-    if st.button("🗃 Backup Data to CSV"):
+    if st.button("📃 Backup Data to CSV"):
         backup_df = pd.read_sql("SELECT * FROM trips", conn)
         csv_bytes = backup_df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Backup CSV", csv_bytes, "trip_backup.csv", "text/csv")
@@ -139,86 +139,33 @@ if is_admin:
     else:
         st.info("No data available for selected date range.")
 
-# Download section
-st.subheader("Download Trip Data")
-start_date = st.date_input("Start Date", date.today().replace(day=1))
-end_date = st.date_input("End Date", date.today())
+# Download Trip Data Section
+st.subheader("⬇️ Download Trip Data")
+download_start = st.date_input("Start Date", date.today().replace(day=1), key="dl_start")
+download_end = st.date_input("End Date", date.today(), key="dl_end")
 
-query = """
-    SELECT trip_date AS "Date", datetime AS "Start Time", start_km AS "Start KM",
-           end_km AS "End KM", km_travelled AS "KM Travelled", remark AS "Remarks"
-    FROM trips
-    WHERE vehicle=? AND date(trip_date) BETWEEN ? AND ?
-"""
-df_download = pd.read_sql(query, conn, params=(vehicle_no, str(start_date), str(end_date)))
-df_download.insert(0, "Sr. No", range(1, len(df_download) + 1))
-df_download.insert(1, "Vehicle Name", vehicle_no)
-df_download["End Time"] = df_download["Start Time"]
-df_download["Signature"] = ""
-df_download = df_download[["Sr. No", "Date", "Vehicle Name", "Start Time", "Start KM", "End Time", "End KM", "KM Travelled", "Remarks", "Signature"]]
+if st.button("⬇️ Download Trip Data"):
+    query = """
+        SELECT trip_date AS "Date", datetime AS "Start Time", 
+               start_km AS "Start KM", end_km AS "End KM", 
+               km_travelled AS "KM Travelled", remark AS "Remarks" 
+        FROM trips 
+        WHERE vehicle=? AND date(trip_date) BETWEEN ? AND ?
+    """
+    df_download = pd.read_sql(query, conn, params=(vehicle_no, str(download_start), str(download_end)))
 
-# Add total row
-total_row = pd.DataFrame({
-    "Sr. No": [""],
-    "Date": [""],
-    "Vehicle Name": ["Total"],
-    "Start Time": [""],
-    "Start KM": [""],
-    "End Time": [""],
-    "End KM": [""],
-    "KM Travelled": [df_download["KM Travelled"].sum()],
-    "Remarks": [""],
-    "Signature": [""]
-})
-df_final = pd.concat([df_download, total_row], ignore_index=True)
+    if not df_download.empty:
+        df_download.insert(0, "Sr. No", range(1, len(df_download) + 1))
 
-st.dataframe(df_final)
+        # Convert columns to appropriate types to avoid Arrow error
+        df_download["Sr. No"] = pd.to_numeric(df_download["Sr. No"], errors="coerce").fillna(0).astype(int)
+        df_download["Start KM"] = pd.to_numeric(df_download["Start KM"], errors="coerce").fillna(0).astype(int)
+        df_download["End KM"] = pd.to_numeric(df_download["End KM"], errors="coerce").fillna(0).astype(int)
+        df_download["KM Travelled"] = pd.to_numeric(df_download["KM Travelled"], errors="coerce").fillna(0).astype(int)
 
-# CSV Download
-csv_data = df_final.to_csv(index=False).encode('utf-8')
-st.download_button("📄 Download CSV", csv_data, f"{vehicle_no}_trip_summary.csv", "text/csv")
+        st.dataframe(df_download)
 
-# Excel Download
-output = BytesIO()
-with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-    df_final.to_excel(writer, index=False, sheet_name='Trips')
-excel_data = output.getvalue()
-st.download_button("📈 Download Excel (.xlsx)", excel_data, f"{vehicle_no}_trip_summary.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# PDF Download
-class PDF(FPDF):
-    def header(self):
-        self.set_font("Arial", "B", 12)
-        self.cell(0, 10, f"{vehicle_no} Trip Summary", ln=True, align='C')
-        self.set_font("Arial", "", 10)
-        self.cell(0, 10, f"Period: {start_date} to {end_date}", ln=True, align='C')
-        self.ln(5)
-
-    def table(self, data):
-        self.set_font("Arial", "B", 9)
-        headers = ["Sr. No", "Date", "Vehicle Name", "Start Time", "Start KM", "End Time", "End KM", "KM Travelled", "Remarks", "Signature"]
-        col_widths = [10, 20, 25, 25, 20, 25, 20, 25, 25, 25]
-
-        for i, header in enumerate(headers):
-            self.cell(col_widths[i], 10, header, border=1)
-        self.ln()
-
-        self.set_font("Arial", "", 8)
-        for _, row in data.iterrows():
-            self.cell(col_widths[0], 10, str(row["Sr. No"]), border=1)
-            self.cell(col_widths[1], 10, str(row["Date"]), border=1)
-            self.cell(col_widths[2], 10, str(row["Vehicle Name"]), border=1)
-            self.cell(col_widths[3], 10, str(row["Start Time"]), border=1)
-            self.cell(col_widths[4], 10, str(row["Start KM"]), border=1)
-            self.cell(col_widths[5], 10, str(row["End Time"]), border=1)
-            self.cell(col_widths[6], 10, str(row["End KM"]), border=1)
-            self.cell(col_widths[7], 10, str(row["KM Travelled"]), border=1)
-            self.cell(col_widths[8], 10, str(row["Remarks"]), border=1)
-            self.cell(col_widths[9], 10, str(row["Signature"]), border=1)
-            self.ln()
-
-pdf = PDF()
-pdf.add_page()
-pdf.table(df_final)
-pdf_bytes = pdf.output(dest='S').encode('latin1')
-st.download_button("📄 Download PDF", pdf_bytes, f"{vehicle_no}_trip_summary.pdf", "application/pdf")
+        csv = df_download.to_csv(index=False).encode("utf-8")
+        st.download_button("Download CSV", csv, f"{vehicle_no}_trip_data.csv", "text/csv")
+    else:
+        st.warning("No data found for the selected range.")
