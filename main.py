@@ -41,7 +41,7 @@ with tab2:
     if not st.session_state.admin_logged_in:
         admin_password = st.text_input("Enter Admin Password", type="password")
         if st.button("Login"):
-            if admin_password == "admin123":  # Change password securely in deployment
+            if admin_password == "RVPL@123":  # Change password securely in deployment
                 st.session_state.admin_logged_in = True
                 st.success("Logged in successfully.")
             else:
