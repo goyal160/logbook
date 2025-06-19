@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime, date
+import sqlite3, shutil, os, humanize
+from datetime import datetime, date, timedelta
 from io import BytesIO
 from fpdf import FPDF
 import xlsxwriter
@@ -26,6 +26,36 @@ cursor.execute('''
 ''')
 
 VEHICLE_LIST = ["CA Gaadi", "Manish", "Ertiga", "XL6"]
+
+# Define backup directory
+BACKUP_DIR = "backups"
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+# --- Auto Backup & Cleanup ---
+def auto_backup_and_cleanup():
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    backup_filename = f"trip_data_backup_{timestamp}.db"
+    backup_path = os.path.join(BACKUP_DIR, backup_filename)
+
+    # Create backup if one for today doesn't already exist
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    existing_today = any(today_str in fname for fname in os.listdir(BACKUP_DIR))
+
+    if not existing_today:
+        shutil.copy(DB_FILE, backup_path)
+
+    # Cleanup: Delete backups older than 3 days
+    cutoff_time = datetime.now() - timedelta(days=3)
+    for file in os.listdir(BACKUP_DIR):
+        full_path = os.path.join(BACKUP_DIR, file)
+        if os.path.isfile(full_path):
+            modified_time = datetime.fromtimestamp(os.path.getmtime(full_path))
+            if modified_time < cutoff_time:
+                os.remove(full_path)
+
+# Call the function at app start
+auto_backup_and_cleanup()
 
 st.title("🚗 Vehicle Trip Sheet Tracking")
 
@@ -156,6 +186,98 @@ if st.session_state.get("admin_logged_in"):
         st.line_chart(km_pivot)
     else:
         st.info("No data available for selected date range.")
+    
+    # --- Backup: Download current DB file ---
+    # Ensure backup directory exists
+    st.subheader("🧾 Database Backup & Versioned Restore")
+
+    # 1. Create timestamped backup
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    backup_filename = f"trip_data_backup_{timestamp}.db"
+    backup_path = os.path.join(BACKUP_DIR, backup_filename)
+
+    if st.button("📁 Create Timestamped Backup"):
+        shutil.copy(DB_FILE, backup_path)
+        st.success(f"✅ Backup saved as {backup_filename}")
+
+    # 2. List all available backups for download or restore
+    backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True)
+    if backup_files:
+        selected_backup = st.selectbox("📜 Available Backups", backup_files)
+
+        # Download selected backup
+        with open(os.path.join(BACKUP_DIR, selected_backup), "rb") as f:
+            st.download_button(
+                label="⬇️ Download Selected Backup",
+                data=f,
+                file_name=selected_backup,
+                mime="application/octet-stream",
+                key=f"download_{selected_backup}"  # unique key
+            )
+
+        # Restore selected backup
+        if st.button("♻️ Restore Selected Backup"):
+            shutil.copy(os.path.join(BACKUP_DIR, selected_backup), DB_FILE)
+            st.success("✅ Restored from selected backup.")
+            st.rerun()
+    else:
+        st.info("No backups found yet.")
+
+    # 3. Restore from uploaded file
+    st.divider()
+    uploaded_db = st.file_uploader("📤 Upload a new .db file to restore", type=["db"])
+    if uploaded_db is not None:
+        try:
+            uploaded_filename = f"uploaded_restore_{timestamp}.db"
+            uploaded_path = os.path.join(BACKUP_DIR, uploaded_filename)
+
+            # Save uploaded file to backups folder
+            with open(uploaded_path, "wb") as f:
+                f.write(uploaded_db.read())
+
+            # Backup current DB before replacing
+            shutil.copy(DB_FILE, f"{DB_FILE}.bak")
+
+            # Replace main DB
+            shutil.copy(uploaded_path, DB_FILE)
+            st.success(f"✅ Uploaded DB restored. Backup also saved as {uploaded_filename}")
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ Failed to restore database: {e}")
+
+    # backup log viewer
+    st.subheader("📜 Backup Log Viewer")
+
+    # List and display backup files
+    backup_entries = []
+    for file in sorted(os.listdir(BACKUP_DIR), reverse=True):
+        path = os.path.join(BACKUP_DIR, file)
+        if os.path.isfile(path) and file.endswith(".db"):
+            created_at = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+            size_kb = os.path.getsize(path) / 1024
+            backup_entries.append({
+                "Backup File": file,
+                "Date Created": created_at,
+                "Size (KB)": f"{size_kb:.1f}"
+            })
+
+    if backup_entries:
+        df_log = pd.DataFrame(backup_entries)
+        st.dataframe(df_log)
+
+        # Optional: Select and download from the list
+        selected_file = st.selectbox("Download a backup", df_log["Backup File"], key="backup_file_select")
+        with open(os.path.join(BACKUP_DIR, selected_file), "rb") as f:
+            st.download_button(
+                label="⬇️ Download Selected Backup",
+                data=f,
+                file_name=selected_file,
+                mime="application/octet-stream",
+                key=f"download_button_{selected_file}"  # Unique key for each file
+            )
+    else:
+        st.info("No backup files available.")
 
 # Download Trip Data Section
 st.subheader("⬇️ Download Trip Data")
@@ -175,12 +297,8 @@ if st.button("⬇️ Download Trip Data"):
     if not df_download.empty:
         df_download.insert(0, "Sr. No", range(1, len(df_download) + 1))
 
-        df_download = df_download.astype({
-            "Sr. No": int,
-            "Start KM": int,
-            "End KM": int,
-            "KM Travelled": int
-        })
+        for col in ["Sr. No", "Start KM", "End KM", "KM Travelled"]:
+            df_download[col] = pd.to_numeric(df_download[col], errors="coerce").fillna(0).astype(int)
 
         st.dataframe(df_download)
 
