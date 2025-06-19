@@ -2,3 +2,6 @@ streamlit
 pandas
 fpdf
 xlsxwriter
+os
+shutil
+humanize
